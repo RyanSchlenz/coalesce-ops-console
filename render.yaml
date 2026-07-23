@@ -1,0 +1,34 @@
+services:
+  # FastAPI backend. Mock mode needs no secrets; to go live later, set
+  # USE_MOCK=false and add the Coalesce env vars in the Render dashboard,
+  # never in this file.
+  - type: web
+    name: coalesce-ops-console-api
+    runtime: python
+    rootDir: api
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.5"
+      - key: USE_MOCK
+        value: "true"
+
+  # Static frontend. The /api rewrite is the production twin of the Vite dev
+  # proxy: the browser stays on this site's origin and Render forwards
+  # /api/whatever to the backend as /whatever, so CORS never enters into it.
+  - type: web
+    name: coalesce-ops-console
+    runtime: static
+    rootDir: web
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /api/*
+        destination: https://coalesce-ops-console-api.onrender.com/*
+      - type: rewrite
+        source: /*
+        destination: /index.html
