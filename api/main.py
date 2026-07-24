@@ -1,7 +1,7 @@
 """Coalesce Ops Console - backend.
 
 A thin FastAPI service that exposes a single endpoint, GET /runs, which returns
-recent Coalesce job runs for one environment as clean, normalized JSON.
+recent Coalesce job runs as clean, normalized JSON.
 
 Design notes
 ------------
@@ -14,6 +14,7 @@ Design notes
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -81,7 +82,7 @@ def health() -> dict[str, str]:
 
 @app.get("/runs", response_model=list[Run])
 async def get_runs() -> list[Run]:
-    """Return recent runs for the configured environment.
+    """Return recent runs, newest first.
 
     In mock mode this returns canned data. In live mode it calls the Coalesce
     REST API, then normalizes each record via _normalize_run.
@@ -116,7 +117,7 @@ async def _fetch_coalesce_runs() -> list[dict[str, Any]]:
     """
     url = f"{settings.coalesce_base_url}/api/v1/runs"
     headers = {"Authorization": f"Bearer {settings.coalesce_token}"}
-    params = {"environmentID": settings.coalesce_environment_id}
+    params = {"orderBy": "runStartTime", "orderByDirection": "desc", "limit": "25"}
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(url, headers=headers, params=params)
@@ -138,18 +139,32 @@ async def _fetch_coalesce_runs() -> list[dict[str, Any]]:
 def _normalize_run(raw: dict[str, Any]) -> Run:
     """Map one raw Coalesce run record onto the stable Run shape.
 
-    Tolerant lookups across several candidate field names keep an unexpected
-    response shape from raising KeyError; missing fields fall back to safe
-    defaults instead.
+    Run objects carry no name field, so runs are identified by id. The API
+    returns no duration either; it is computed from runStartTime/runEndTime
+    when both are present (a still-running job has no end time yet).
     """
+    run_id = str(_first(raw, "id", "runCounter", default="unknown"))
     return Run(
-        id=str(_first(raw, "runCounter", "id", "runId", default="unknown")),
-        name=str(_first(raw, "name", "jobName", "runName", default="(unnamed run)")),
-        status=str(_first(raw, "runStatus", "status", "state", default="unknown")).lower(),
+        id=run_id,
+        name=str(_first(raw, "name", "runType", default=f"run {run_id}")),
+        status=str(_first(raw, "status", "runStatus", default="unknown")).lower(),
         environment=str(_first(raw, "environmentName", "environmentID", default=settings.coalesce_environment_id)),
-        started_at=_opt_str(_first(raw, "startTime", "startedAt", "createdAt", default=None)),
-        duration_seconds=_opt_float(_first(raw, "durationSeconds", "duration", default=None)),
+        started_at=_opt_str(_first(raw, "runStartTime", "startTime", default=None)),
+        duration_seconds=_duration_seconds(raw),
     )
+
+
+def _duration_seconds(raw: dict[str, Any]) -> float | None:
+    """Compute run duration from timestamps; None while still running."""
+    start = _first(raw, "runStartTime", "startTime", default=None)
+    end = _first(raw, "runEndTime", "endTime", default=None)
+    if start is None or end is None:
+        return None
+    try:
+        delta = datetime.fromisoformat(str(end)) - datetime.fromisoformat(str(start))
+        return delta.total_seconds()
+    except ValueError:
+        return None
 
 
 def _first(raw: dict[str, Any], *keys: str, default: Any) -> Any:
@@ -162,13 +177,6 @@ def _first(raw: dict[str, Any], *keys: str, default: Any) -> Any:
 
 def _opt_str(value: Any) -> str | None:
     return None if value is None else str(value)
-
-
-def _opt_float(value: Any) -> float | None:
-    try:
-        return None if value is None else float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _mock_runs() -> list[Run]:

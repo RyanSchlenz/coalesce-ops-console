@@ -54,6 +54,7 @@ export function RunsTable({ runs }: { runs: Run[] }) {
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
     success: "bg-green-900/50 text-green-300 border-green-800",
+    completed: "bg-green-900/50 text-green-300 border-green-800",
     failed: "bg-red-900/50 text-red-300 border-red-800",
     error: "bg-red-900/50 text-red-300 border-red-800",
     running: "bg-blue-900/50 text-blue-300 border-blue-800",
