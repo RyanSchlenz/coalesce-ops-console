@@ -17,10 +17,16 @@ import logging
 from typing import Any
 
 import httpx
+import truststore
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Trust the OS certificate store so outbound TLS works behind corporate
+# HTTPS-inspection proxies, which re-sign traffic with a company root CA
+# that Python's bundled CA list does not know about.
+truststore.inject_into_ssl()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("coalesce-ops-console")
