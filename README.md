@@ -3,6 +3,8 @@
 A small full-stack app for monitoring Coalesce job runs. React frontend, FastAPI
 backend, Coalesce REST API.
 
+https://coalesce-ops-console.onrender.com/
+
 The backend holds the Coalesce access token server-side and exposes a single
 clean endpoint the frontend consumes. The browser never sees a credential.
 
