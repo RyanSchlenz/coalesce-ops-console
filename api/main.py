@@ -14,6 +14,7 @@ Design notes
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import datetime
 from typing import Any
@@ -119,7 +120,7 @@ async def _fetch_coalesce_runs() -> list[dict[str, Any]]:
     """
     url = f"{settings.coalesce_base_url}/api/v1/runs"
     headers = {"Authorization": f"Bearer {settings.coalesce_token}"}
-    params = {"orderBy": "runStartTime", "orderByDirection": "desc", "limit": "25"}
+    params = {"orderBy": "runStartTime", "orderByDirection": "desc", "limit": "25", "detail": "true"}
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(url, headers=headers, params=params)
@@ -182,21 +183,48 @@ async def _fetch_environment_names() -> dict[str, str]:
 def _normalize_run(raw: dict[str, Any], env_names: dict[str, str] | None = None) -> Run:
     """Map one raw Coalesce run record onto the stable Run shape.
 
-    Run objects carry no name field, so runs are identified by id. The API
-    returns no duration either; it is computed from runStartTime/runEndTime
-    when both are present (a still-running job has no end time yet). The
+    With detail=true each record is a RunInfo whose runDetails block carries
+    the job name (refresh runs) or commit message (deploy runs), plus the
+    environment ID. Duration is computed from runStartTime/runEndTime when
+    both are present (a still-running job has no end time yet), and the
     environment ID is swapped for its display name when the lookup knows it.
     """
     run_id = str(_first(raw, "id", "runCounter", default="unknown"))
-    env = str(_first(raw, "environmentName", "environmentID", default=settings.coalesce_environment_id))
+    details = raw.get("runDetails")
+    if not isinstance(details, dict):
+        details = {}
+    env = _opt_str(_first(raw, "environmentName", "environmentID", default=None)) \
+        or _opt_str(details.get("environmentID")) \
+        or settings.coalesce_environment_id
     return Run(
         id=run_id,
-        name=str(_first(raw, "name", "runType", default=f"run {run_id}")),
-        status=str(_first(raw, "status", "runStatus", default="unknown")).lower(),
+        name=_display_name(raw, details, run_id),
+        status=_pretty_status(_first(raw, "status", "runStatus", default="unknown")),
         environment=(env_names or {}).get(env, env),
         started_at=_opt_str(_first(raw, "runStartTime", "startTime", default=None)),
         duration_seconds=_duration_seconds(raw),
     )
+
+
+def _display_name(raw: dict[str, Any], details: dict[str, Any], run_id: str) -> str:
+    """Best human-readable label for a run.
+
+    Refresh runs started from a Job carry the job name as refreshDescription;
+    deploys carry a commit message; ad-hoc runs fall back to their run type.
+    """
+    name = details.get("refreshDescription") or raw.get("name")
+    if name:
+        return str(name)
+    commit_message = details.get("deployCommitMessage")
+    if commit_message:
+        return f"deploy: {str(commit_message).splitlines()[0][:60]}"
+    run_type = raw.get("runType")
+    return str(run_type) if run_type else f"run {run_id}"
+
+
+def _pretty_status(value: Any) -> str:
+    """Split camelCase API statuses ("waitingToRun") into readable words."""
+    return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", str(value)).lower()
 
 
 def _duration_seconds(raw: dict[str, Any]) -> float | None:

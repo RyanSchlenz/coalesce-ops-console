@@ -58,6 +58,8 @@ function StatusBadge({ status }: { status: string }) {
     failed: "bg-red-900/50 text-red-300 border-red-800",
     error: "bg-red-900/50 text-red-300 border-red-800",
     running: "bg-blue-900/50 text-blue-300 border-blue-800",
+    initializing: "bg-blue-900/50 text-blue-300 border-blue-800",
+    rendering: "bg-blue-900/50 text-blue-300 border-blue-800",
     canceled: "bg-amber-900/40 text-amber-300 border-amber-800",
   };
   const style = styles[status] ?? "bg-slate-800 text-slate-300 border-slate-700";
