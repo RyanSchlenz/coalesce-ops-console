@@ -14,6 +14,7 @@ Design notes
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from typing import Any
 
@@ -105,7 +106,8 @@ async def get_runs() -> list[Run]:
         logger.error("Could not reach Coalesce API: %s", exc)
         raise HTTPException(status_code=502, detail="Could not reach Coalesce API.") from exc
 
-    return [_normalize_run(r) for r in raw_runs]
+    env_names = await _fetch_environment_names()
+    return [_normalize_run(r, env_names) for r in raw_runs]
 
 
 async def _fetch_coalesce_runs() -> list[dict[str, Any]]:
@@ -136,19 +138,62 @@ async def _fetch_coalesce_runs() -> list[dict[str, Any]]:
     return []
 
 
-def _normalize_run(raw: dict[str, Any]) -> Run:
+_ENV_CACHE_TTL_SECONDS = 300.0
+_env_names: dict[str, str] = {}
+_env_names_fetched_at: float = 0.0
+
+
+async def _fetch_environment_names() -> dict[str, str]:
+    """Map environment IDs to display names, cached briefly.
+
+    Environments change rarely, so a short-lived cache keeps /runs from
+    paying an extra upstream call on every refresh. Failures fall back to
+    whatever is cached (or nothing) so the table still renders with raw IDs.
+    """
+    global _env_names_fetched_at
+    now = time.monotonic()
+    if _env_names and now - _env_names_fetched_at < _ENV_CACHE_TTL_SECONDS:
+        return _env_names
+
+    url = f"{settings.coalesce_base_url}/api/v1/environments"
+    headers = {"Authorization": f"Bearer {settings.coalesce_token}"}
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(url, headers=headers, params={"limit": "500"})
+            response.raise_for_status()
+            body = response.json()
+    except httpx.HTTPError as exc:
+        logger.warning("Could not fetch environments for name lookup: %s", exc)
+        return _env_names
+
+    records = body.get("data") if isinstance(body, dict) else body
+    if isinstance(records, list):
+        _env_names.update(
+            {
+                str(r["id"]): str(r["name"])
+                for r in records
+                if isinstance(r, dict) and r.get("id") is not None and r.get("name")
+            }
+        )
+        _env_names_fetched_at = now
+    return _env_names
+
+
+def _normalize_run(raw: dict[str, Any], env_names: dict[str, str] | None = None) -> Run:
     """Map one raw Coalesce run record onto the stable Run shape.
 
     Run objects carry no name field, so runs are identified by id. The API
     returns no duration either; it is computed from runStartTime/runEndTime
-    when both are present (a still-running job has no end time yet).
+    when both are present (a still-running job has no end time yet). The
+    environment ID is swapped for its display name when the lookup knows it.
     """
     run_id = str(_first(raw, "id", "runCounter", default="unknown"))
+    env = str(_first(raw, "environmentName", "environmentID", default=settings.coalesce_environment_id))
     return Run(
         id=run_id,
         name=str(_first(raw, "name", "runType", default=f"run {run_id}")),
         status=str(_first(raw, "status", "runStatus", default="unknown")).lower(),
-        environment=str(_first(raw, "environmentName", "environmentID", default=settings.coalesce_environment_id)),
+        environment=(env_names or {}).get(env, env),
         started_at=_opt_str(_first(raw, "runStartTime", "startTime", default=None)),
         duration_seconds=_duration_seconds(raw),
     )
