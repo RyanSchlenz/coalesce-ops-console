@@ -52,9 +52,3 @@ Open http://localhost:5173. You should see the runs table.
    in `api/main.py`; adjust the endpoint path or field names there if your
    environment differs.
 
-## Roadmap
-
-- v0 (done): one environment, list runs, refresh.
-- v1: deploy with a public URL, environment selector, run-detail view
-  (nodes / steps / logs).
-- v2: trigger runs from the UI, auto-refresh, auth, run-duration charts.
