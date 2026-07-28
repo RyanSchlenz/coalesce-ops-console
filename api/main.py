@@ -48,6 +48,9 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+# 30 seconds is not enough for large environments; see coalesce-api-toolkit.
+REQUEST_TIMEOUT = 120.0
+
 
 class Run(BaseModel):
     """A single Coalesce job run, normalized to a stable shape for the UI.
@@ -122,7 +125,7 @@ async def _fetch_coalesce_runs() -> list[dict[str, Any]]:
     headers = {"Authorization": f"Bearer {settings.coalesce_token}"}
     params = {"orderBy": "runStartTime", "orderByDirection": "desc", "limit": "25", "detail": "true"}
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         response = await client.get(url, headers=headers, params=params)
         response.raise_for_status()
         body = response.json()
@@ -159,7 +162,7 @@ async def _fetch_environment_names() -> dict[str, str]:
     url = f"{settings.coalesce_base_url}/api/v1/environments"
     headers = {"Authorization": f"Bearer {settings.coalesce_token}"}
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
             response = await client.get(url, headers=headers, params={"limit": "500"})
             response.raise_for_status()
             body = response.json()
